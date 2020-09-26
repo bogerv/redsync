@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"io"
@@ -9,7 +10,7 @@ import (
 
 // A Pool maintains a pool of Redis connections.
 type Pool interface {
-	Get() Conn
+	Get(ctx context.Context) (Conn, error)
 }
 
 type Conn interface {
@@ -29,6 +30,6 @@ type Script struct {
 
 func NewScript(keyCount int, src string) *Script {
 	h := sha1.New()
-	io.WriteString(h, src)
+	_, _ = io.WriteString(h, src)
 	return &Script{keyCount, src, hex.EncodeToString(h.Sum(nil))}
 }
