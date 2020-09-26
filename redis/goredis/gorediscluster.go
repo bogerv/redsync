@@ -1,76 +1,74 @@
 package goredis
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	"github.com/go-redis/redis"
-	redsyncredis "github.com/go-redsync/redsync/v3/redis"
+	redsyncredis "github.com/go-redsync/redsync/v4/redis"
 )
 
-type ClusterPool struct {
+type clusterPool struct {
 	delegate *redis.ClusterClient
 }
 
-func (self *ClusterPool) Get() redsyncredis.Conn {
-	return &ClusterConn{self.delegate}
+func (p *clusterPool) Get(ctx context.Context) (redsyncredis.Conn, error) {
+	c := p.delegate
+	if ctx != nil {
+		c = c.WithContext(ctx)
+	}
+	return &clusterConn{c}, nil
 }
 
-func NewClusterPool(delegate *redis.ClusterClient) *ClusterPool {
-	return &ClusterPool{delegate}
+func NewClusterPool(delegate *redis.ClusterClient) redsyncredis.Pool {
+	return &clusterPool{delegate}
 }
 
-type ClusterConn struct {
+type clusterConn struct {
 	delegate *redis.ClusterClient
 }
 
-func (self *ClusterConn) Get(name string) (string, error) {
-	value, err := self.delegate.Get(name).Result()
-	err = noErrNil(err)
-	return value, err
+func (c *clusterConn) Get(name string) (string, error) {
+	value, err := c.delegate.Get(name).Result()
+	return value, noErrNil(err)
 }
 
-func (self *ClusterConn) Set(name string, value string) (bool, error) {
-	reply, err := self.delegate.Set(name, value, 0).Result()
-	return err == nil && reply == "OK", nil
+func (c *clusterConn) Set(name string, value string) (bool, error) {
+	reply, err := c.delegate.Set(name, value, 0).Result()
+	return reply == "OK", noErrNil(err)
 }
 
-func (self *ClusterConn) SetNX(name string, value string, expiry time.Duration) (bool, error) {
-	return self.delegate.SetNX(name, value, expiry).Result()
+func (c *clusterConn) SetNX(name string, value string, expiry time.Duration) (bool, error) {
+	ok, err := c.delegate.SetNX(name, value, expiry).Result()
+	return ok, noErrNil(err)
 }
 
-func (self *ClusterConn) PTTL(name string) (time.Duration, error) {
-	return self.delegate.PTTL(name).Result()
+func (c *clusterConn) PTTL(name string) (time.Duration, error) {
+	expiry, err := c.delegate.PTTL(name).Result()
+	return expiry, noErrNil(err)
 }
 
-func (self *ClusterConn) Eval(script *redsyncredis.Script, keysAndArgs ...interface{}) (interface{}, error) {
-	var keys []string
-	var args []interface{}
+func (c *clusterConn) Eval(script *redsyncredis.Script, keysAndArgs ...interface{}) (interface{}, error) {
+	keys := make([]string, script.KeyCount)
+	args := keysAndArgs
 
 	if script.KeyCount > 0 {
-
-		keys = []string{}
-
 		for i := 0; i < script.KeyCount; i++ {
-			keys = append(keys, keysAndArgs[i].(string))
+			keys[i] = keysAndArgs[i].(string)
 		}
 
 		args = keysAndArgs[script.KeyCount:]
-
-	} else {
-		keys = []string{}
-		args = keysAndArgs
 	}
 
-	v, err := self.delegate.EvalSha(script.Hash, keys, args...).Result()
+	v, err := c.delegate.EvalSha(script.Hash, keys, args...).Result()
 	if err != nil && strings.HasPrefix(err.Error(), "NOSCRIPT ") {
-		v, err = self.delegate.Eval(script.Src, keys, args...).Result()
+		v, err = c.delegate.Eval(script.Src, keys, args...).Result()
 	}
-	err = noErrNil(err)
-	return v, err
+	return v, noErrNil(err)
 }
 
-func (self *ClusterConn) Close() error {
+func (c *clusterConn) Close() error {
 	// Not needed for this library
 	return nil
 }
